@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Status da API</title>
+<style>
+  :root {
+    --fundo: #f6f7f9; --texto: #1d2330; --suave: #5b6475; --linha: #d9dde4; --painel: #ffffff;
+    --ok: #1f7a4d; --ok-fundo: #e3f4ea; --alerta: #8a5a00; --alerta-fundo: #fff4d6;
+    --erro: #b3261e; --erro-fundo: #fbe4e2; --codigo: #f0f2f5;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --fundo: #14171c; --texto: #e6e9ef; --suave: #9aa3b2; --linha: #2c323c; --painel: #1b1f26;
+      --ok: #5fcf95; --ok-fundo: #16301f; --alerta: #f3d98a; --alerta-fundo: #3a3013;
+      --erro: #f08a82; --erro-fundo: #3d1a18; --codigo: #12151a;
+      color-scheme: dark;
+    }
+  }
+  body { margin: 0; background: var(--fundo); color: var(--texto);
+         font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 980px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 1.4rem; margin: 0 0 4px; }
+  h2 { font-size: 1.05rem; margin: 28px 0 8px; }
+  p { margin: 4px 0; color: var(--suave); }
+  a { color: inherit; }
+  button, select { font: inherit; color: inherit; background: var(--painel); border: 1px solid var(--linha);
+                   border-radius: 6px; padding: 5px 12px; cursor: pointer; }
+  .topo { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; }
+
+  .geral { display: flex; gap: 14px; align-items: center; padding: 14px 16px; border-radius: 8px; margin: 16px 0;
+           background: var(--painel); border: 1px solid var(--linha); }
+  .geral .bola { width: 14px; height: 14px; border-radius: 50%; flex: none; background: var(--suave); }
+  .geral strong { font-size: 1.1rem; display: block; }
+  .geral.ok { background: var(--ok-fundo); border-color: transparent; } .geral.ok .bola { background: var(--ok); }
+  .geral.alerta { background: var(--alerta-fundo); border-color: transparent; } .geral.alerta .bola { background: var(--alerta); }
+  .geral.erro { background: var(--erro-fundo); border-color: transparent; } .geral.erro .bola { background: var(--erro); }
+
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+  .card { background: var(--painel); border: 1px solid var(--linha); border-radius: 8px; padding: 10px 12px; }
+  .card span { display: block; color: var(--suave); font-size: .8rem; }
+  .card b { font-size: 1.15rem; font-variant-numeric: tabular-nums; }
+
+  .rolagem { overflow-x: auto; background: var(--painel); border: 1px solid var(--linha); border-radius: 6px; }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  th, td { padding: 7px 10px; text-align: right; border-bottom: 1px solid var(--linha); white-space: nowrap; }
+  th:first-child, td:first-child, td.esq, th.esq { text-align: left; }
+  td.det { text-align: left; white-space: normal; color: var(--suave); min-width: 220px; }
+  th { color: var(--suave); font-weight: 600; font-size: .85rem; }
+  tr:last-child td { border-bottom: 0; }
+
+  .selo { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: .8rem; font-weight: 600; }
+  .selo.ok { background: var(--ok-fundo); color: var(--ok); }
+  .selo.alerta { background: var(--alerta-fundo); color: var(--alerta); }
+  .selo.erro { background: var(--erro-fundo); color: var(--erro); }
+  .selo.espera { background: var(--codigo); color: var(--suave); }
+
+  .explorar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+  .explorar select { flex: 1 1 260px; min-width: 0; }
+  pre { margin: 0; padding: 12px; background: var(--codigo); border: 1px solid var(--linha); border-radius: 6px;
+        overflow: auto; max-height: 420px; font: 12.5px/1.45 ui-monospace, Consolas, monospace; }
+</style>
+</head>
+<body>
+<main>
+  <div class="topo">
+    <div>
+      <h1>Status da API</h1>
+      <p>Confere, no próprio navegador, se cada arquivo da API publicada responde e está consistente.</p>
+    </div>
+    <div><a href="./">← Página principal</a> · <button id="testar" type="button">Testar de novo</button></div>
+  </div>
+
+  <div id="geral" class="geral"><div class="bola"></div><div><strong>Testando…</strong><span id="geral-texto"></span></div></div>
+
+  <div class="cards" id="cards"></div>
+
+  <h2>Verificações</h2>
+  <div class="rolagem"><table id="verificacoes"></table></div>
+
+  <h2>Arquivos</h2>
+  <div class="rolagem"><table id="arquivos"></table></div>
+
+  <h2>Explorar</h2>
+  <div class="explorar">
+    <select id="endpoint"></select>
+    <button id="abrir" type="button">Abrir em nova aba</button>
+  </div>
+  <pre id="json">Selecione um arquivo.</pre>
+</main>
+<script>
+const BASE = "./api/v1/";
+const ATRASO_MAX_MIN = 90;   // cron de hora em hora + atraso do GitHub
+const num = v => v == null ? "–" : v.toLocaleString("pt-BR", { maximumFractionDigits: 1 });
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const kb = n => (n / 1024).toLocaleString("pt-BR", { maximumFractionDigits: 1 }) + " KB";
+const SELO = { ok: "OK", alerta: "Atenção", erro: "Falha", espera: "…" };
+const selo = s => `<span class="selo ${s}">${SELO[s]}</span>`;
+
+let cache = {};   // caminho -> { status, ms, bytes, dados, erro }
+
+async function buscar(caminho) {
+  const t0 = performance.now();
+  try {
+    const r = await fetch(BASE + caminho, { cache: "no-cache" });
+    const texto = await r.text();
+    const ms = Math.round(performance.now() - t0);
+    if (!r.ok) return cache[caminho] = { status: r.status, ms, bytes: texto.length, erro: `HTTP ${r.status}` };
+    try {
+      return cache[caminho] = { status: r.status, ms, bytes: new Blob([texto]).size, dados: JSON.parse(texto) };
+    } catch {
+      return cache[caminho] = { status: r.status, ms, bytes: texto.length, erro: "JSON inválido" };
+    }
+  } catch (e) {
+    return cache[caminho] = { status: 0, ms: Math.round(performance.now() - t0), bytes: 0, erro: e.message };
+  }
+}
+
+// Agora em Brasília, como "AAAA-MM-DDTHH:MM:SS" (mesmo formato do atualizado_em) + dia da semana.
+function agoraBrasilia() {
+  const p = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit", weekday: "short", hourCycle: "h23",
+  }).formatToParts(new Date()).map(x => [x.type, x.value]));
+  return { iso: `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}:${p.second}`, semana: p.weekday,
+           minutoDoDia: +p.hour * 60 + +p.minute };
+}
+const minutosEntre = (a, b) => Math.round((Date.parse(b + "Z") - Date.parse(a + "Z")) / 60000);
+
+const CAMPOS_BLOCO = ["meta", "realizado", "atingimento_pct", "diferenca", "tendencia", "tendencia_pct",
+                      "meta_dia", "online_hoje", "status"];
+function blocoValido(produtos, ids) {
+  return ids.every(id => produtos?.[id] && CAMPOS_BLOCO.every(c => c in produtos[id]));
+}
+
+async function testar() {
+  cache = {};
+  const verif = [];   // { nome, estado, detalhe }
+  const add = (nome, estado, detalhe = "") => verif.push({ nome, estado, detalhe });
+  document.getElementById("geral").className = "geral";
+  document.querySelector("#geral strong").textContent = "Testando…";
+  document.getElementById("geral-texto").textContent = "";
+
+  // 1. index.json
+  const ri = await buscar("index.json");
+  const idx = ri.dados;
+  if (!idx) {
+    add("index.json responde", "erro", ri.erro + ' — rode o workflow "Atualizar dados" e "Publicar site".');
+    return mostrar(verif, null);
+  }
+  add("index.json responde", "ok", `HTTP ${ri.status} em ${ri.ms} ms`);
+  const faltando = ["versao_api", "atualizado_em", "mes_referencia", "calendario", "produtos", "status", "gerencias"]
+    .filter(c => !(c in idx));
+  add("index.json tem os campos do contrato", faltando.length ? "erro" : "ok",
+      faltando.length ? "Faltam: " + faltando.join(", ") : `versão ${idx.versao_api}`);
+
+  // Atualização
+  const agora = agoraBrasilia();
+  const idade = minutosEntre(idx.atualizado_em, agora.iso);
+  const util = !["Sat", "Sun"].includes(agora.semana);
+  const janela = util && agora.minutoDoDia >= 7 * 60 + 15 && agora.minutoDoDia <= 19 * 60 + 15;
+  const idadeTxt = idade < 60 ? `${idade} min` : idade < 2880 ? `${Math.round(idade / 60)} h` : `${Math.round(idade / 1440)} dias`;
+  add("Dados atualizados recentemente",
+      janela && idade > ATRASO_MAX_MIN ? "alerta" : "ok",
+      `última atualização há ${idadeTxt}` +
+      (janela ? (idade > ATRASO_MAX_MIN ? ` (esperado até ${ATRASO_MAX_MIN} min no horário comercial)` : "")
+              : " (fora do horário de atualização: seg-sex, 7h-18h45)"));
+  add("Dados reais (Datasphere)", idx.simulado ? "alerta" : "ok",
+      idx.simulado ? "a API está com dados SIMULADOS (fictícios)" : "dados do Datasphere");
+
+  // 2. resumo, gerências e busca em paralelo
+  const ids = idx.produtos.map(p => p.id);
+  const gcs = idx.gerencias.map(g => g.id);
+  const [rr, rb, ...rgs] = await Promise.all([buscar("resumo.json"), buscar("busca.json"),
+                                              ...gcs.map(g => buscar(`gerencias/${g}.json`))]);
+  const resumo = rr.dados;
+  if (!resumo) add("resumo.json responde", "erro", rr.erro);
+  else {
+    add("resumo.json responde", "ok", `HTTP ${rr.status} em ${rr.ms} ms`);
+    const okBlocos = blocoValido(resumo.empresa?.produtos, ids) && resumo.gerencias.every(g => blocoValido(g.produtos, ids));
+    add("resumo.json traz todos os produtos", okBlocos ? "ok" : "erro", ids.join(", "));
+    const difs = ids.filter(id => {
+      const soma = resumo.gerencias.reduce((s, g) => s + (g.produtos[id]?.meta || 0), 0);
+      const tot = resumo.empresa.produtos[id]?.meta || 0;
+      return Math.abs(soma - tot) > 0.5;
+    });
+    add("Meta da empresa = soma das gerências", difs.length ? "alerta" : "ok",
+        difs.length ? "diferença em: " + difs.join(", ") : "conferido por produto");
+  }
+
+  const gFalhas = gcs.filter((g, i) => !rgs[i].dados);
+  add(`Gerências respondem (${gcs.length})`, gFalhas.length ? "erro" : "ok",
+      gFalhas.length ? "falharam: " + gFalhas.join(", ") : gcs.join(", "));
+
+  // 3. todas as rotas listadas nas gerências
+  const rotas = rgs.flatMap(r => r.dados?.rotas?.map(x => x.id) || []);
+  const rrs = await Promise.all(rotas.map(r => buscar(`rotas/${r}.json`)));
+  const rFalhas = rotas.filter((r, i) => !rrs[i].dados);
+  add(`Rotas respondem (${rotas.length})`, rFalhas.length ? "erro" : rotas.length ? "ok" : "alerta",
+      rFalhas.length ? "falharam: " + rFalhas.join(", ") : rotas.length ? "todas as rotas das gerências" : "nenhuma rota listada");
+  const nClientes = rrs.reduce((s, r) => s + (r.dados?.clientes?.length || 0), 0);
+
+  // 4. busca
+  const busca = rb.dados;
+  if (!busca) add("busca.json responde", "erro", rb.erro);
+  else {
+    const iRota = busca.campos.indexOf("rota");
+    const conjunto = new Set(rotas);
+    const orfaos = busca.clientes.filter(c => !conjunto.has(String(c[iRota]))).length;
+    add("busca.json aponta para rotas existentes", orfaos ? "alerta" : "ok",
+        `${busca.clientes.length.toLocaleString("pt-BR")} clientes` + (orfaos ? `, ${orfaos} em rotas sem arquivo` : ""));
+  }
+
+  mostrar(verif, { idx, resumo, rotas, nClientes, idade: idadeTxt });
+}
+
+function mostrar(verif, ctx) {
+  const pior = verif.some(v => v.estado === "erro") ? "erro" : verif.some(v => v.estado === "alerta") ? "alerta" : "ok";
+  const titulos = { ok: "API funcionando", alerta: "API funcionando, com avisos", erro: "API com falha" };
+  document.getElementById("geral").className = "geral " + pior;
+  document.querySelector("#geral strong").textContent = titulos[pior];
+  const arqs = Object.values(cache);
+  const totalMs = arqs.reduce((s, a) => Math.max(s, a.ms), 0);
+  document.getElementById("geral-texto").textContent =
+    `${verif.filter(v => v.estado === "ok").length} de ${verif.length} verificações OK · ` +
+    `${arqs.filter(a => a.dados).length} de ${arqs.length} arquivos lidos · testado às ` +
+    new Date().toLocaleTimeString("pt-BR");
+
+  document.getElementById("verificacoes").innerHTML =
+    "<tr><th class='esq'>Verificação</th><th class='esq'>Resultado</th><th class='esq'>Detalhe</th></tr>" +
+    verif.map(v => `<tr><td>${esc(v.nome)}</td><td class="esq">${selo(v.estado)}</td><td class="det">${esc(v.detalhe)}</td></tr>`).join("");
+
+  const ordem = c => (c.startsWith("rotas/") ? 2 : c.startsWith("gerencias/") ? 1 : 0);
+  const linhas = Object.entries(cache).sort(([a], [b]) => ordem(a) - ordem(b) || a.localeCompare(b));
+  document.getElementById("arquivos").innerHTML =
+    "<tr><th class='esq'>Arquivo</th><th class='esq'>Resultado</th><th>HTTP</th><th>Tempo</th><th>Tamanho</th></tr>" +
+    linhas.map(([c, a]) => `<tr><td><a href="${BASE + c}" target="_blank" rel="noopener">${esc(c)}</a></td>` +
+      `<td class="esq">${selo(a.dados ? "ok" : "erro")}${a.erro ? " " + esc(a.erro) : ""}</td>` +
+      `<td>${a.status || "–"}</td><td>${a.ms} ms</td><td>${kb(a.bytes)}</td></tr>`).join("");
+
+  const cards = ctx ? [
+    ["Mês de referência", ctx.idx.mes_referencia.rotulo + (ctx.idx.mes_referencia.fechamento ? " (fechado)" : "")],
+    ["Atualizado há", ctx.idade],
+    ["Dia útil", `${ctx.idx.calendario.dia_util_hoje} de ${ctx.idx.calendario.dias_uteis_mes}`],
+    ["Gerências / rotas", `${ctx.idx.gerencias.length} / ${ctx.rotas.length}`],
+    ["Clientes", ctx.nClientes.toLocaleString("pt-BR")],
+    ["Arquivo mais lento", totalMs + " ms"],
+  ] : [];
+  document.getElementById("cards").innerHTML =
+    cards.map(([t, v]) => `<div class="card"><span>${esc(t)}</span><b>${esc(v)}</b></div>`).join("");
+
+  const sel = document.getElementById("endpoint");
+  const atual = sel.value;
+  sel.innerHTML = linhas.filter(([, a]) => a.dados).map(([c]) => `<option>${esc(c)}</option>`).join("");
+  if (atual && cache[atual]?.dados) sel.value = atual;
+  mostrarJson();
+}
+
+function mostrarJson() {
+  const c = document.getElementById("endpoint").value;
+  const a = cache[c];
+  if (!a?.dados) { document.getElementById("json").textContent = "Selecione um arquivo."; return; }
+  const texto = JSON.stringify(a.dados, null, 2);
+  const limite = 60000;
+  document.getElementById("json").textContent = texto.length > limite
+    ? texto.slice(0, limite) + `\n\n… (${kb(texto.length)} no total; abra em nova aba para ver tudo)` : texto;
+}
+
+document.getElementById("testar").onclick = testar;
+document.getElementById("endpoint").onchange = mostrarJson;
+document.getElementById("abrir").onclick = () => {
+  const c = document.getElementById("endpoint").value;
+  if (c) window.open(BASE + c, "_blank", "noopener");
+};
+testar();
+</script>
+</body>
+</html>

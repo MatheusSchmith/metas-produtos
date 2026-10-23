@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Meta por Cliente</title>
+<link rel="stylesheet" href="comum.css">
+</head>
+<body>
+<main>
+  <div class="topo">
+    <div>
+      <h1>Meta NEG por Cliente</h1>
+      <p id="estado">Carregando…</p>
+    </div>
+    <div class="topo-acoes">
+      <p><a href="./">Página principal</a> · <a href="status.html">Status da API</a></p>
+      <button id="atualizar" type="button" class="primario">↻ Atualizar dados</button>
+      <p id="atualizar-msg" role="status"></p>
+    </div>
+  </div>
+  <div id="avisos"></div>
+
+  <section class="filtros" aria-label="Filtros">
+    <div class="busca-cliente">
+      <label for="f-busca">Procurar cliente (código ou nome)</label>
+      <input id="f-busca" type="search" placeholder="ex.: 1145468 ou Skinão" autocomplete="off"
+             role="combobox" aria-expanded="false" aria-controls="f-resultados">
+      <ul id="f-resultados" class="resultados" role="listbox" hidden></ul>
+    </div>
+    <div><label for="f-mes">Mês (Data Meta SAP)</label><select id="f-mes"></select></div>
+    <div><label for="f-gerencia">Gerência</label><select id="f-gerencia"></select></div>
+    <div><label for="f-sv">Supervisão</label><select id="f-sv"></select></div>
+    <div><label for="f-rota">Rota</label><select id="f-rota"></select></div>
+    <div><label for="f-cliente">Cliente</label><select id="f-cliente" disabled></select></div>
+    <div><label for="f-ag">Agrupador Produto (Meta SAP)</label><select id="f-ag"></select></div>
+    <div class="acoes linha-inteira">
+      <button id="limpar" type="button">Limpar filtros</button>
+      <a id="ir-rotas" class="botao" href="especies.html">← Meta por agrupador (até rota)</a>
+    </div>
+  </section>
+  <p class="aviso" id="dica" hidden></p>
+
+  <div class="cards" id="cards"></div>
+  <div class="rolagem"><table id="tabela"></table></div>
+  <p class="nota">Meta do cliente = <b>Meta NEG</b> (META_NEG, meta negociada), por Agrupador Produto (Meta SAP) e com o
+    filtro de mês da Meta SAP; a soma dos clientes de uma rota fecha com a meta da rota. <b>Volume Padrão (Realizado)</b> = regra do Flash de Vendas: FX_VOL_PADRAO_FAT do mês da venda até ontem, pelo agrupador do produto, só notas Acertado/Meta Neg/Em Aberto e sem clientes sem gerência (rota atual do cliente); <b>Volume Hoje</b> = VL_PADRAO com Data Movimento = hoje (faturado de hoje + pedidos de
+    hoje no WF Online); <b>Meta Dia</b> = Meta Recuperável Rota (META_RECUPERAVEL_ROTA) com Data Movimento = hoje.
+    Com um cliente escolhido, as linhas são os agrupadores dele; só com a rota, as linhas são os clientes do agrupador
+    escolhido.</p>
+</main>
+<script src="comum.js"></script>
+<script>
+const f = { mes: "", gc: "", sv: "", rota: "", cliente: "", ag: "" };
+let indice, dados, daRota = null, ordem = "meta", asc = false;
+
+async function carregarMes() {
+  $("estado").textContent = "Carregando…";
+  const m = indice.meses.find(x => x.anomes === f.mes) || indice.meses[0];
+  f.mes = m.anomes;
+  dados = await json(m.arquivo);
+  daRota = null;
+  $("estado").textContent = textoAtualizado(indice, dados.rotulo);
+  await desenhar();
+}
+
+async function lerRota() {
+  if (!f.rota) { daRota = null; return; }
+  if (daRota && daRota.rota === f.rota && daRota.anomes === f.mes) return;
+  const r = dados.rotas.find(x => x.id === f.rota);
+  const d = await json(r.arquivo);
+  const c = indices(d.campos);
+  d.itens = d.linhas.map(l => ({ ag: l[c.agrupador], pv: l[c.cliente], meta: l[c.meta_neg], real: l[c.realizado],
+    hoje: l[c.realizado_hoje] ?? 0, dia: l[c.meta_dia] }));
+  d.nomes = new Map(d.clientes.map(x => [String(x.pv), x.nome]));
+  daRota = d;
+}
+
+async function desenhar() {
+  hierarquiaRotas(dados, f);
+  const selCli = $("f-cliente");
+  if (!f.rota) {
+    f.cliente = "";
+    opcoes(selCli, [], "", "Escolha uma rota");
+    selCli.disabled = true;
+  } else {
+    opcoes(selCli, [], "", "Carregando…");
+    await lerRota();
+    if (!daRota.nomes.has(String(f.cliente))) f.cliente = "";
+    opcoes(selCli, daRota.clientes.map(x => [x.pv, x.nome ? `${x.pv} · ${x.nome}` : String(x.pv)]), f.cliente,
+           `Todos (${daRota.clientes.length.toLocaleString("pt-BR")})`);
+    selCli.disabled = false;
+  }
+
+  const itens = daRota ? daRota.itens.filter(l => !f.cliente || String(l.pv) === String(f.cliente)) : [];
+  const somaAg = new Map();
+  for (const l of itens) somaAg.set(l.ag, (somaAg.get(l.ag) || 0) + l.meta);
+  const ags = [...somaAg.keys()].sort(porNome);
+  // Só com a rota (lista de clientes), um agrupador por vez: somar agrupadores repetiria produtos.
+  if (f.rota && !f.cliente && !ags.includes(f.ag) && ags.length)
+    f.ag = [...somaAg].sort((a, b) => b[1] - a[1])[0][0];
+  if (!ags.includes(f.ag)) f.ag = "";
+  opcoes($("f-ag"), ags.map(a => [a, a]), f.ag, f.rota && !f.cliente ? null : "Todos");
+  gravarHash(f);
+  $("ir-rotas").href = "especies.html#" + new URLSearchParams(
+    Object.entries({ mes: f.mes, gc: f.gc, sv: f.sv, rota: f.rota, ag: f.ag }).filter(([, v]) => v)).toString();
+
+  const dica = $("dica");
+  dica.hidden = !!f.rota;
+  dica.textContent = "Procure um cliente pelo código ou nome, ou escolha uma rota para ver a Meta NEG dos clientes.";
+
+  let lista, titulo;
+  if (f.cliente) {          // linhas = agrupadores do cliente
+    titulo = "Agrupador Produto (Meta SAP)";
+    lista = itens.filter(l => !f.ag || l.ag === f.ag).map(l => ({ ...l, nome: esc(l.ag) }));
+  } else if (f.rota) {      // linhas = clientes da rota, no agrupador escolhido
+    titulo = `Cliente <small>(${esc(f.ag)})</small>`;
+    lista = itens.filter(l => l.ag === f.ag).map(l => ({ ...l,
+      nome: `${l.pv} · ${esc(daRota.nomes.get(String(l.pv)) || "")}` }));
+  } else lista = [];
+  for (const s of lista) { s.pct = s.meta ? s.real / s.meta : -Infinity; s.dif = s.real - s.meta; }
+  lista.sort((a, b) => (asc ? 1 : -1) * (ordem === "nome" ? porNome(b.nome, a.nome) : a[ordem] - b[ordem]));
+  const tot = lista.reduce((s, l) => ({ meta: s.meta + l.meta, real: s.real + l.real, hoje: s.hoje + l.hoje, dia: s.dia + l.dia }),
+                           { meta: 0, real: 0, hoje: 0, dia: 0 });
+
+  $("cards").innerHTML = !lista.length ? "" : [["Meta NEG", num(tot.meta, 2)], ["Volume Padrão (Realizado)", num(tot.real, 2)], ["Volume Hoje", num(tot.hoje, 2)], ["Meta Dia", num(tot.dia, 2)],
+    ["Atingimento", tot.meta ? num(tot.real / tot.meta * 100, 1) + "%" : "–"], ["Diferença", num(tot.real - tot.meta, 2)],
+    [f.cliente ? "Agrupadores" : "Clientes", lista.length.toLocaleString("pt-BR")]]
+    .map(([n, v]) => `<div class="card"><span>${n}</span><b>${v}</b></div>`).join("");
+
+  if (!lista.length) {
+    $("tabela").innerHTML = f.rota ? `<tr><td class="vazio">Nenhum resultado para os filtros escolhidos.</td></tr>` : "";
+    return;
+  }
+  const cab = [["nome", titulo], ["meta", "Meta NEG"], ["real", "Volume Padrão (Realizado)"], ["hoje", "Volume Hoje"],
+               ["dia", "Meta Dia"], ["pct", "Atingimento"], ["dif", "Diferença"]];
+  const linha = (nome, s) => `<td>${nome}</td><td>${num(s.meta, 2)}</td><td>${num(s.real, 2)}</td><td>${num(s.hoje, 2)}</td>` +
+    `<td>${num(s.dia, 2)}</td><td>${pctCelula(s.real, s.meta)}</td>${difCelula(s.real, s.meta)}`;
+  $("tabela").innerHTML = "<tr>" + cab.map(([k, n]) =>
+      `<th data-chave="${k}"${ordem === k ? ` data-ordem="${asc ? "asc" : "desc"}"` : ""}>${n}</th>`).join("") + "</tr>" +
+    lista.map(s => `<tr>${linha(s.nome, s)}</tr>`).join("") +
+    `<tr class="total">${linha(f.cliente ? "Total <small>(soma dos agrupadores)</small>" : "Total da rota", tot)}</tr>`;
+}
+
+// Procurar cliente: índice [código, nome, rota] do mês, lido só na primeira busca.
+let busca = null, achados = [], marcado = -1;
+async function indiceBusca() {
+  if (!busca || busca.mes !== f.mes) {
+    const b = await json(dados.busca);
+    busca = { mes: f.mes, itens: b.clientes.map(([pv, nome, rota]) => ({ pv, nome, rota, chave: norm(`${pv} ${nome}`) })) };
+  }
+  return busca.itens;
+}
+function listarAchados() {
+  const rotas = new Map(dados.rotas.map(r => [r.id, r]));
+  $("f-resultados").innerHTML = achados.length ? achados.map((a, i) =>
+    `<li role="option" data-i="${i}" aria-selected="${i === marcado}"><span>${a.pv} · ${esc(a.nome || "(sem nome)")}</span>` +
+    `<small>Rota ${esc(a.rota)} · ${esc(rotas.get(a.rota)?.gerencia || "")}</small></li>`).join("")
+    : `<li class="vazio">Nenhum cliente encontrado em ${esc(dados.rotulo)}.</li>`;
+  $("f-resultados").hidden = false;
+  $("f-busca").setAttribute("aria-expanded", "true");
+}
+function fecharAchados() {
+  $("f-resultados").hidden = true;
+  $("f-busca").setAttribute("aria-expanded", "false");
+}
+async function procurar(texto) {
+  const t = norm(texto.trim());
+  if (t.length < 2) return fecharAchados();
+  const itens = await indiceBusca();
+  achados = itens.filter(a => /^\d+$/.test(t) ? String(a.pv).startsWith(t) : a.chave.includes(t)).slice(0, 30);
+  marcado = achados.length ? 0 : -1;
+  listarAchados();
+}
+function escolher(a) {
+  const r = dados.rotas.find(x => x.id === a.rota);
+  Object.assign(f, { gc: r?.gerencia || "", sv: r?.supervisao || "", rota: a.rota, cliente: String(a.pv), ag: "" });
+  $("f-busca").value = `${a.pv} · ${a.nome}`;
+  fecharAchados();
+  desenhar().catch(falhar);
+}
+$("f-busca").oninput = e => procurar(e.target.value).catch(falhar);
+$("f-busca").onkeydown = e => {
+  if ($("f-resultados").hidden || !achados.length) return;
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    marcado = (marcado + (e.key === "ArrowDown" ? 1 : -1) + achados.length) % achados.length;
+    listarAchados();
+  } else if (e.key === "Enter") { e.preventDefault(); escolher(achados[Math.max(0, marcado)]); }
+  else if (e.key === "Escape") fecharAchados();
+};
+$("f-resultados").onmousedown = e => {
+  const li = e.target.closest("li[data-i]");
+  if (li) { e.preventDefault(); escolher(achados[+li.dataset.i]); }
+};
+$("f-busca").onblur = () => setTimeout(fecharAchados, 150);
+
+const mudou = (k, limpa = {}) => e => { f[k] = e.target.value; Object.assign(f, limpa); desenhar().catch(falhar); };
+$("f-mes").onchange = e => { f.mes = e.target.value; carregarMes().catch(falhar); };
+$("f-gerencia").onchange = mudou("gc");
+$("f-sv").onchange = mudou("sv");
+$("f-rota").onchange = mudou("rota", { cliente: "" });
+$("f-cliente").onchange = mudou("cliente");
+$("f-ag").onchange = mudou("ag");
+$("limpar").onclick = () => {
+  Object.assign(f, { gc: "", sv: "", rota: "", cliente: "", ag: "" });
+  $("f-busca").value = "";
+  desenhar().catch(falhar);
+};
+$("tabela").onclick = e => {
+  const th = e.target.closest("th[data-chave]");
+  if (!th) return;
+  asc = ordem === th.dataset.chave ? !asc : th.dataset.chave === "nome";
+  ordem = th.dataset.chave;
+  desenhar().catch(falhar);
+};
+botaoAtualizar(async () => { indice = await carregarIndice(); busca = null; await carregarMes(); });
+
+(async () => {
+  try {
+    Object.assign(f, lerHash(Object.keys(f)));
+    indice = await carregarIndice();
+    opcoes($("f-mes"), indice.meses.map(m => [m.anomes, m.rotulo]), f.mes);
+    if (!indice.meses.some(m => m.anomes === f.mes)) f.mes = indice.meses[0].anomes;
+    $("f-mes").value = f.mes;
+    await carregarMes();
+  } catch (erro) { falhar(erro); }
+})();
+</script>
+</body>
+</html>

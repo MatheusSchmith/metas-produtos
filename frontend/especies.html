@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Meta por Agrupador</title>
+<link rel="stylesheet" href="comum.css">
+</head>
+<body>
+<main>
+  <div class="topo">
+    <div>
+      <h1>Meta x Realizado por Agrupador</h1>
+      <p id="estado">Carregando…</p>
+    </div>
+    <div class="topo-acoes">
+      <p><a href="./">Página principal</a> · <a href="status.html">Status da API</a></p>
+      <button id="atualizar" type="button" class="primario">↻ Atualizar dados</button>
+      <p id="atualizar-msg" role="status"></p>
+    </div>
+  </div>
+  <div id="avisos"></div>
+
+  <section class="filtros" aria-label="Filtros">
+    <div><label for="f-mes">Mês (Data Meta SAP)</label><select id="f-mes"></select></div>
+    <div><label for="f-gerencia">Gerência</label><select id="f-gerencia"></select></div>
+    <div><label for="f-sv">Supervisão</label><select id="f-sv"></select></div>
+    <div><label for="f-rota">Rota</label><select id="f-rota"></select></div>
+    <div><label for="f-ag">Agrupador Produto (Meta SAP)</label><select id="f-ag"></select></div>
+    <div><label for="f-texto">Buscar agrupador</label><input id="f-texto" type="search" placeholder="ex.: Powerade"></div>
+    <div class="acoes linha-inteira">
+      <button id="limpar" type="button">Limpar filtros</button>
+      <a id="ir-clientes" class="botao primario" href="clientes.html">Consultar meta a nível cliente →</a>
+    </div>
+  </section>
+
+  <div class="cards" id="cards"></div>
+  <div class="rolagem"><table id="tabela"></table></div>
+  <p class="nota">Linhas por <b>Agrupador Produto (Meta SAP)</b>, como na história do SAC. <b>Meta</b> = META_VOLUME da
+    Meta SAP; <b>Volume Padrão (Realizado)</b> = regra do Flash de Vendas: FX_VOL_PADRAO_FAT do mês da venda até ontem, pelo agrupador do produto, só notas Acertado/Meta Neg/Em Aberto e sem clientes sem gerência; <b>Volume Hoje</b> =
+    VL_PADRAO com Data Movimento = hoje (faturado de hoje + pedidos de hoje no WF Online); <b>Meta Dia</b> = Meta Recuperável Rota (META_RECUPERAVEL_ROTA) com Data Movimento = hoje. Meta e Meta Dia com o filtro de mês da Meta SAP. Um produto pode estar em mais de um agrupador
+    (ex.: Refrigerantes e Sabores Tt), então o total soma volumes repetidos entre agrupadores. Atingimento e Diferença usam o realizado até ontem. A meta por cliente (Meta NEG)
+    fica na tela <a href="clientes.html">Meta por cliente</a>.</p>
+</main>
+<script src="comum.js"></script>
+<script>
+const f = { mes: "", gc: "", sv: "", rota: "", ag: "" };
+let indice, dados, linhas = [], texto = "", ordem = "meta", asc = false;
+
+async function carregarMes() {
+  $("estado").textContent = "Carregando…";
+  const m = indice.meses.find(x => x.anomes === f.mes) || indice.meses[0];
+  f.mes = m.anomes;
+  dados = await json(m.arquivo);
+  const c = indices(dados.campos);
+  linhas = dados.linhas.map(l => ({ ag: l[c.agrupador], gc: l[c.gerencia], sv: l[c.supervisao], rota: l[c.rota],
+    meta: l[c.meta], real: l[c.realizado], hoje: l[c.realizado_hoje] ?? 0, dia: l[c.meta_dia] }));
+  $("estado").textContent = textoAtualizado(indice, dados.rotulo);
+  desenhar();
+}
+
+function desenhar() {
+  hierarquiaRotas(dados, f);
+  const base = linhas.filter(l => (!f.gc || l.gc === f.gc) && (!f.sv || l.sv === f.sv) && (!f.rota || l.rota === f.rota));
+  const ags = [...new Set(base.map(l => l.ag))].sort(porNome);
+  if (!ags.includes(f.ag)) f.ag = "";
+  opcoes($("f-ag"), ags.map(a => [a, a]), f.ag, "Todos");
+  gravarHash(f);
+  $("ir-clientes").href = "clientes.html#" + new URLSearchParams(Object.entries(f).filter(([, v]) => v)).toString();
+
+  const t = norm(texto);
+  const porAg = new Map();
+  for (const l of base) {
+    if ((f.ag && l.ag !== f.ag) || (t && !norm(l.ag).includes(t))) continue;
+    const s = porAg.get(l.ag) || { nome: l.ag, meta: 0, real: 0, hoje: 0, dia: 0 };
+    s.meta += l.meta; s.real += l.real; s.hoje += l.hoje; s.dia += l.dia;
+    porAg.set(l.ag, s);
+  }
+  const lista = [...porAg.values()];
+  for (const s of lista) { s.pct = s.meta ? s.real / s.meta : -Infinity; s.dif = s.real - s.meta; }
+  lista.sort((a, b) => (asc ? 1 : -1) * (ordem === "nome" ? porNome(b.nome, a.nome) : a[ordem] - b[ordem]));
+  const tot = lista.reduce((s, l) => ({ meta: s.meta + l.meta, real: s.real + l.real, hoje: s.hoje + l.hoje, dia: s.dia + l.dia }),
+                           { meta: 0, real: 0, hoje: 0, dia: 0 });
+
+  $("cards").innerHTML = [["Meta", num(tot.meta, 2)], ["Volume Padrão (Realizado)", num(tot.real, 2)], ["Volume Hoje", num(tot.hoje, 2)], ["Meta Dia", num(tot.dia, 2)],
+    ["Atingimento", tot.meta ? num(tot.real / tot.meta * 100, 1) + "%" : "–"], ["Diferença", num(tot.real - tot.meta, 2)],
+    ["Agrupadores", lista.length.toLocaleString("pt-BR")]]
+    .map(([n, v]) => `<div class="card"><span>${n}</span><b>${v}</b></div>`).join("");
+
+  const cab = [["nome", "Agrupador Produto (Meta SAP)"], ["meta", "Meta"], ["real", "Volume Padrão (Realizado)"], ["hoje", "Volume Hoje"], ["dia", "Meta Dia"], ["pct", "Atingimento"], ["dif", "Diferença"]];
+  const linha = (nome, s) => `<td>${nome}</td><td>${num(s.meta, 2)}</td><td>${num(s.real, 2)}</td><td>${num(s.hoje, 2)}</td>` +
+    `<td>${num(s.dia, 2)}</td><td>${pctCelula(s.real, s.meta)}</td>${difCelula(s.real, s.meta)}`;
+  $("tabela").innerHTML = "<tr>" + cab.map(([k, n]) =>
+      `<th data-chave="${k}"${ordem === k ? ` data-ordem="${asc ? "asc" : "desc"}"` : ""}>${n}</th>`).join("") + "</tr>" +
+    (lista.length ? lista.map(s => `<tr>${linha(esc(s.nome), s)}</tr>`).join("") +
+      `<tr class="total">${linha("Total <small>(soma dos agrupadores)</small>", tot)}</tr>`
+      : `<tr><td colspan="7" class="vazio">Nenhum resultado para os filtros escolhidos.</td></tr>`);
+}
+
+const mudou = k => e => { f[k] = e.target.value; desenhar(); };
+$("f-mes").onchange = e => { f.mes = e.target.value; carregarMes().catch(falhar); };
+$("f-gerencia").onchange = mudou("gc");
+$("f-sv").onchange = mudou("sv");
+$("f-rota").onchange = mudou("rota");
+$("f-ag").onchange = mudou("ag");
+$("f-texto").oninput = e => { texto = e.target.value; desenhar(); };
+$("limpar").onclick = () => { Object.assign(f, { gc: "", sv: "", rota: "", ag: "" }); texto = ""; $("f-texto").value = ""; desenhar(); };
+$("tabela").onclick = e => {
+  const th = e.target.closest("th[data-chave]");
+  if (!th) return;
+  asc = ordem === th.dataset.chave ? !asc : th.dataset.chave === "nome";
+  ordem = th.dataset.chave;
+  desenhar();
+};
+botaoAtualizar(async () => { indice = await carregarIndice(); await carregarMes(); });
+
+(async () => {
+  try {
+    Object.assign(f, lerHash(Object.keys(f)));
+    indice = await carregarIndice();
+    opcoes($("f-mes"), indice.meses.map(m => [m.anomes, m.rotulo]), f.mes);
+    if (!indice.meses.some(m => m.anomes === f.mes)) f.mes = indice.meses[0].anomes;
+    $("f-mes").value = f.mes;
+    await carregarMes();
+  } catch (erro) { falhar(erro); }
+})();
+</script>
+</body>
+</html>

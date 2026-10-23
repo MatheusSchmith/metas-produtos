@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Metas x Realizado de Volume (página provisória)</title>
+<style>
+  :root {
+    --fundo: #f6f7f9; --texto: #1d2330; --suave: #5b6475; --linha: #d9dde4; --painel: #ffffff;
+    --ok: #1f7a4d; --ritmo: #2b62c4; --abaixo: #b3261e; --aviso-fundo: #fff4d6; --aviso-texto: #6b4e00;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --fundo: #14171c; --texto: #e6e9ef; --suave: #9aa3b2; --linha: #2c323c; --painel: #1b1f26;
+      --ok: #5fcf95; --ritmo: #7fa8f0; --abaixo: #f08a82; --aviso-fundo: #3a3013; --aviso-texto: #f3d98a;
+      color-scheme: dark;
+    }
+  }
+  body { margin: 0; background: var(--fundo); color: var(--texto);
+         font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 980px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 1.4rem; margin: 0 0 4px; }
+  h2 { font-size: 1.05rem; margin: 28px 0 8px; }
+  p { margin: 4px 0; color: var(--suave); }
+  .aviso { background: var(--aviso-fundo); color: var(--aviso-texto); padding: 8px 12px; border-radius: 6px; margin: 12px 0; }
+  .rolagem { overflow-x: auto; background: var(--painel); border: 1px solid var(--linha); border-radius: 6px; }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  th, td { padding: 7px 10px; text-align: right; border-bottom: 1px solid var(--linha); white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--suave); font-weight: 600; font-size: .85rem; }
+  tr:last-child td { border-bottom: 0; }
+  .meta_batida { color: var(--ok); } .no_ritmo { color: var(--ritmo); } .abaixo_do_ritmo { color: var(--abaixo); }
+  .sem_meta { color: var(--suave); }
+  code, a { color: inherit; }
+  ul { padding-left: 20px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Metas x Realizado de Volume</h1>
+  <p>Página provisória para conferir a API. O painel definitivo vai substituir este arquivo (frontend/index.html).</p>
+  <p><a href="especies.html">Meta por Agrupador</a> (até rota) · <a href="clientes.html">Meta NEG por cliente</a> ·
+     <a href="status.html">Status da API</a>: testa todos os arquivos publicados.</p>
+  <p id="estado">Carregando…</p>
+  <div id="avisos"></div>
+
+  <h2>Empresa</h2>
+  <div class="rolagem"><table id="empresa"></table></div>
+
+  <h2>Atingimento por gerência (% realizado / % tendência)</h2>
+  <div class="rolagem"><table id="gerencias"></table></div>
+
+  <h2>Endereços da API</h2>
+  <ul id="enderecos"></ul>
+</main>
+<script>
+const BASE = "./api/v1/";
+const num = v => v == null ? "–" : v.toLocaleString("pt-BR", { maximumFractionDigits: 1 });
+const pct = v => v == null ? "–" : v + "%";
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+async function json(caminho) {
+  const r = await fetch(BASE + caminho, { cache: "no-cache" });
+  if (!r.ok) throw new Error(`${caminho}: HTTP ${r.status}`);
+  return r.json();
+}
+
+async function iniciar() {
+  try {
+    const [idx, resumo] = await Promise.all([json("index.json"), json("resumo.json")]);
+    const quando = new Date(idx.atualizado_em).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
+    const c = idx.calendario;
+    document.getElementById("estado").textContent =
+      `${idx.mes_referencia.rotulo}${idx.mes_referencia.fechamento ? " (fechado)" : ""} · dia útil ${c.dia_util_hoje} de ${c.dias_uteis_mes}` +
+      ` · ritmo esperado ${c.ritmo_esperado_pct}% · atualizado em ${quando}`;
+    const avisos = idx.avisos || [];
+    document.getElementById("avisos").innerHTML = avisos.map(a => `<div class="aviso">${esc(a)}</div>`).join("");
+
+    const nomes = Object.fromEntries(idx.produtos.map(p => [p.id, p.nome]));
+    const st = idx.status;
+    document.getElementById("empresa").innerHTML =
+      "<tr><th>Produto</th><th>Meta</th><th>Realizado</th><th>%</th><th>Tendência</th><th>% tend.</th><th>Hoje (pedidos)</th><th>Status</th></tr>" +
+      idx.produtos.map(p => {
+        const b = resumo.empresa.produtos[p.id];
+        return `<tr><td>${esc(p.nome)}</td><td>${num(b.meta)}</td><td>${num(b.realizado)}</td><td>${pct(b.atingimento_pct)}</td>` +
+               `<td>${num(b.tendencia)}</td><td>${pct(b.tendencia_pct)}</td><td>${num(b.online_hoje)}</td>` +
+               `<td class="${b.status}">${esc(st[b.status])}</td></tr>`;
+      }).join("");
+
+    document.getElementById("gerencias").innerHTML =
+      "<tr><th>Gerência</th>" + idx.produtos.map(p => `<th>${esc(nomes[p.id])}</th>`).join("") + "</tr>" +
+      resumo.gerencias.map(g => `<tr><td>${esc(g.id)} · ${esc(g.nome)}</td>` + idx.produtos.map(p => {
+        const b = g.produtos[p.id];
+        return `<td class="${b.status}">${pct(b.atingimento_pct)} / ${pct(b.tendencia_pct)}</td>`;
+      }).join("") + "</tr>").join("");
+
+    const primeira = idx.gerencias[0]?.id;
+    const links = ["index.json", "resumo.json", "busca.json"].concat(primeira ? [`gerencias/${primeira}.json`] : []);
+    document.getElementById("enderecos").innerHTML = links.map(l => `<li><a href="${BASE + l}">${BASE + l}</a></li>`).join("") +
+      `<li>Rota: <code>${BASE}rotas/{rota}.json</code> (lista de rotas em cada arquivo de gerência)</li>`;
+  } catch (erro) {
+    document.getElementById("estado").textContent = `Não foi possível ler a API (${erro.message}). Rode o workflow "Atualizar dados".`;
+  }
+}
+iniciar();
+</script>
+</body>
+</html>
