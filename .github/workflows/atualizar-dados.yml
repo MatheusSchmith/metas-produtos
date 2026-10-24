@@ -43,7 +43,11 @@ jobs:
       SAIDA_DIR: ../api
       PYTHONIOENCODING: utf-8
     steps:
+      # ref: main pega a versão mais recente na hora em que o job começa, e não a do momento do disparo: uma
+      # execução que esperou outra terminar (concurrency) já parte dos dados que a outra gravou.
       - uses: actions/checkout@v4
+        with:
+          ref: main
 
       - uses: actions/setup-python@v5
         with:
@@ -73,8 +77,11 @@ jobs:
           git add -A api/
           git diff --cached --quiet && exit 0
           git commit -m "dados: atualização $(TZ=America/Sao_Paulo date '+%d/%m/%Y %H:%M')"
+          # Se outra execução gravou dados no meio tempo, o conflito em api/ fica com os dados desta, que são os
+          # mais novos (no rebase, -X theirs = o commit desta execução).
           for i in 1 2 3; do
-            git pull --rebase --autostash origin main && git push origin HEAD:main && exit 0
+            git pull --rebase -X theirs origin main && git push origin HEAD:main && exit 0
+            git rebase --abort 2>/dev/null || true
             sleep 5
           done
           exit 1
